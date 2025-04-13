@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chennai Emergency Route Planner</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#6b21a8" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" crossorigin="" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.css" />
+  <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js" crossorigin=""></script>
+  <script src="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.js"></script>
+</head>
+<body class="bg-gray-100 text-gray-800 min-h-screen flex flex-col">
+  <div id="map" class="absolute inset-0 z-0"></div>
+
+  <!-- Floating Form -->
+  <div class="absolute top-4 right-4 bg-white bg-opacity-90 backdrop-blur-md p-4 rounded-xl shadow-xl space-y-3 w-full max-w-xs z-10">
+    <h2 class="text-lg font-semibold text-center">🚑 Emergency Route</h2>
+    <div>
+      <label class="block text-sm font-medium mb-1">Start Location (click map or choose)</label>
+      <select id="start" class="w-full p-2 border rounded" onchange="updateDestinations()">
+        <option value="guindy">Guindy Kathipara Junction</option>
+        <option value="velachery">Phoenix MarketCity, Velachery</option>
+        <option value="adyar">IIT Madras Main Gate, Adyar</option>
+        <option value="t_nagar">Pondy Bazaar, T Nagar</option>
+        <option value="mylapore">Kapaleeshwarar Temple, Mylapore</option>
+        <option value="kodambakkam">AVM Studios, Kodambakkam</option>
+        <option value="tambaram">Tambaram Railway Station</option>
+        <option value="perambur">Perambur Railway Station</option>
+        <option value="saidapet">Saidapet Court</option>
+        <option value="annanagar">Tower Park, Anna Nagar</option>
+      </select>
+    </div>
+    <div>
+      <label class="block text-sm font-medium mb-1">Nearby Hospitals (within 5 km)</label>
+      <select id="end" class="w-full p-2 border rounded">
+        <option>Select start location first</option>
+      </select>
+    </div>
+    <button onclick="calculateRoute()" class="w-full bg-gradient-to-r from-purple-600 to-blue-600 text-white py-2 rounded shadow hover:opacity-90 transition">Calculate Route</button>
+    <div id="output" class="text-sm text-gray-700"></div>
+    <div id="transport" class="text-xs text-gray-600 mt-2"></div>
+    <div id="toast" class="hidden mt-2 bg-green-500 text-white py-2 px-4 rounded shadow text-center">Route calculated! 🚑</div>
+    <button onclick="sendTestNotification()" class="w-full bg-red-600 text-white py-2 rounded shadow hover:opacity-90 transition">🚨 Test Alert</button>
+  </div>
+
+  <!-- Loading Spinner -->
+  <div id="loading" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+    <div class="loader ease-linear rounded-full border-8 border-t-8 border-gray-200 h-24 w-24"></div>
+  </div>
+
+  <audio id="alertSound" src="https://assets.mixkit.co/sfx/preview/mixkit-alert-bells-echo-918.mp3" preload="auto"></audio>
+
+  <style>
+    .loader {
+      border-top-color: #6b21a8;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+  </style>
+
+  <script>
+    // Coordinates for locations
+    const locations = {
+      guindy: [13.0067, 80.2206],
+      velachery: [12.9756, 80.2214],
+      adyar: [13.0068, 80.2570],
+      t_nagar: [13.0425, 80.2337],
+      mylapore: [13.0308, 80.2685],
+      kodambakkam: [13.0496, 80.2337],
+      tambaram: [12.9247, 80.1187],
+      perambur: [13.1200, 80.2333],
+      saidapet: [13.0336, 80.2209],
+      annanagar: [13.0889, 80.2120]
+    };
+
+    const hospitals = {
+      // Sample hospital locations (shortened for brevity)
+      fortis_malar: [13.0068, 80.2563],
+      apollo_greams: [13.0619, 80.2515],
+      apollo_firstmed: [13.0821, 80.2290],
+      kauvery_mylapore: [13.0335, 80.2673],
+      vijaya_nsk: [13.0505, 80.2127],
+      miot_manapakkam: [13.0104, 80.1745]
+    };
+
+    const hospitalNames = {
+      fortis_malar: 'Fortis Malar Hospital 🚑',
+      apollo_greams: 'Apollo Hospitals (Greams Road) 🚑',
+      apollo_firstmed: 'Apollo First Med Hospitals (Kilpauk) 🚑',
+      kauvery_mylapore: 'Kauvery Hospital (Mylapore) 🚑',
+      vijaya_nsk: 'Vijaya Hospital (NSK Salai) 🚑',
+      miot_manapakkam: 'MIOT International (Manapakkam) 🚑'
+    };
+
+    let selectedStart = locations.guindy;
+    let startMarker;
+
+    const map = L.map('map').setView(selectedStart, 12);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+
+    const hospitalIcon = L.icon({
+      iconUrl: 'https://cdn-icons-png.flaticon.com/512/2967/2967497.png',
+      iconSize: [40, 40],
+      iconAnchor: [20, 40],
+      popupAnchor: [0, -40]
+    });
+
+    Object.entries(hospitals).forEach(([key, coords]) => {
+      L.marker(coords, { icon: hospitalIcon }).addTo(map).bindPopup(hospitalNames[key]);
+    });
+
+    map.on('click', function(e) {
+      selectedStart = [e.latlng.lat, e.latlng.lng];
+      if (startMarker) map.removeLayer(startMarker);
+      startMarker = L.marker(selectedStart).addTo(map).bindPopup('Selected Start Point').openPopup();
+      updateDestinations();
+    });
+
+    function getDistance(coord1, coord2) {
+      const toRad = val => val * Math.PI / 180;
+      const [lat1, lon1] = coord1;
+      const [lat2, lon2] = coord2;
+      const R = 6371;
+      const dLat = toRad(lat2 - lat1);
+      const dLon = toRad(lon2 - lon1);
+      const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return R * c;
+    }
+
+    function updateDestinations() {
+      const endSelect = document.getElementById('end');
+      endSelect.innerHTML = '';
+
+      Object.entries(hospitals).forEach(([key, coords]) => {
+        const distance = getDistance(selectedStart, coords);
+        if (distance <= 5) {
+          const option = document.createElement('option');
+          option.value = key;
+          option.text = `${hospitalNames[key]} (${distance.toFixed(2)} km)`;
+          endSelect.add(option);
+        }
+      });
+
+      if (!endSelect.options.length) {
+        const option = document.createElement('option');
+        option.text = 'No hospitals within 5 km';
+        endSelect.add(option);
+      }
+    }
+
+    function showLoading(show) {
+      document.getElementById('loading').style.display = show ? 'flex' : 'none';
+    }
+
+    function showToast() {
+      const toast = document.getElementById('toast');
+      toast.classList.remove('hidden');
+      setTimeout(() => toast.classList.add('hidden'), 3000);
+    }
+
+    function playAlertSound() {
+      document.getElementById('alertSound').play();
+    }
+
+    let routeControl;
+
+    function calculateRoute() {
+      const endSelect = document.getElementById('end');
+      if (!endSelect.value || endSelect.value === 'No hospitals within 5 km') return;
+
+      const endCoords = hospitals[endSelect.value];
+      showLoading(true);
+
+      if (routeControl) map.removeControl(routeControl);
+
+      routeControl = L.Routing.control({
+        waypoints: [
+          L.latLng(...selectedStart),
+          L.latLng(...endCoords)
+        ],
+        routeWhileDragging: false,
+        show: false,
+        addWaypoints: false,
+        createMarker: () => null,
+        router: new L.Routing.OSRMv1({ serviceUrl: 'https://router.project-osrm.org/route/v1' })
+      }).addTo(map);
+
+      routeControl.on('routesfound', (e) => {
+        const route = e.routes[0];
+        const distance = (route.summary.totalDistance / 1000).toFixed(2);
+        const timeTaken = ((route.summary.totalTime / 60) * 1.3).toFixed(1);
+        const fuelUsed = (distance / 10).toFixed(2);
+
+        document.getElementById('output').innerHTML = `
+          <strong>Details:</strong><br>
+          Distance: <strong>${distance} km</strong><br>
+          Time: <strong>${timeTaken} mins</strong><br>
+          Fuel: <strong>${fuelUsed} liters</strong><br>
+          <span class="text-green-600 font-semibold">Time is critical 🚑</span>
+        `;
+
+        document.getElementById('transport').innerHTML = `
+          <strong>Transport Options:</strong><br>
+          🚇 Nearest Metro: Nehru Park / Kilpauk<br>
+          🚉 Nearest Train: Chetpet Station<br>
+          🚑 Ambulance: Call 1066
+        `;
+
+        playAlertSound();
+        showToast();
+        showLoading(false);
+      });
+    }
+
+    function sendTestNotification() {
+      if ('serviceWorker' in navigator && 'PushManager' in window) {
+        navigator.serviceWorker.ready.then(registration => {
+          registration.active.postMessage({
+            type: 'PUSH_TEST',
+            payload: {
+              title: '🚨 Emergency Alert!',
+              body: 'Traffic congestion detected. Suggest rerouting!'
+            }
+          });
+        });
+      }
+    }
+
+    Notification.requestPermission();
+
+  </script>
+</body>
+</html>
