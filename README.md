@@ -1,9 +1,5 @@
-Built a Real-Time Hospital Locator and Navigation
-
-System
-
-Hi connections,
-
+Hi I'm Joe V Kadavan 
+Built a Real-Time Hospital Locator and Navigation System and submitted to IEEERAS VIT CHENNAI 
 I've been working on a web-based platform that helps users locate nearby hospitals quickly and get the shortest route from any selected starting point. Unlike Google Maps, which serves a broad range of purposes, this tool is focused solely on hospitals-making it faster and more relevant during critical situations.
 
 It's simple, easy to use, and especially useful in emergencies where time and clarity matter most.
